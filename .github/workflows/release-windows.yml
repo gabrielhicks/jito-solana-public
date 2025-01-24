@@ -1,0 +1,203 @@
+name: Build and Publish Windows
+
+on:
+  release:
+    types: [published] 
+  workflow_dispatch:    
+
+jobs:
+  windows-build:
+    runs-on: windows-2022
+
+    env:
+      RELEASE_BASENAME: solana-release
+      TARBALL_BASENAME: solana-release
+      CI_OS_NAME: windows
+      TARGET: x86_64-pc-windows-msvc
+
+    steps:
+      # Checkout Code
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          submodules: recursive
+
+      # Cache Cargo Dependencies
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      # Cache Chocolatey Packages
+      - name: Cache Chocolatey Dependencies
+        uses: actions/cache@v3
+        with:
+          path: C:\ProgramData\chocolatey\lib
+          key: choco-${{ runner.os }}-${{ hashFiles('.github/workflows/build-windows.yml') }}
+
+      # Setup Rust
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Verify Rust Installation
+        shell: bash
+        run: |
+          rustc --version || { echo "Rust installation failed!"; exit 1; }
+          cargo --version || { echo "Cargo installation failed!"; exit 1; }
+
+      # Check Build State
+      - name: Check Build State
+        id: check_state
+        uses: actions/download-artifact@v3
+        with:
+          name: build-success-windows
+        continue-on-error: true
+
+      - name: Skip Build If Successful
+        if: steps.check_state.outcome == 'success'
+        run: |
+          echo "Build already completed successfully. Skipping..."
+          exit 0
+
+      # Install Dependencies
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          choco install protoc jq || { echo "Failed to install dependencies via Chocolatey"; exit 1; }
+          vcpkg install openssl:x64-windows-static-md || { echo "Failed to install openssl"; exit 1; }
+          vcpkg integrate install
+
+      # Install Perl and Dependencies
+      - name: Install Strawberry Perl and Dependencies
+        run: |
+          choco install strawberryperl
+          perl -MCPAN -e "install Locale::Maketext::Simple" || { echo "Perl module installation failed!"; exit 1; }
+
+      - name: Verify Perl Installation
+        run: |
+          perl --version || { echo "Perl is not installed correctly"; exit 1; }
+          perl -e "use Locale::Maketext::Simple; print 'Perl with required modules is ready.\n';"
+
+      # Build Project
+      - name: Build Project
+        shell: bash
+        run: |
+          set -e
+          echo "Preparing release directory..."
+          export PERL="C:/Strawberry/perl/bin/perl.exe"
+          mkdir -p ${{ env.RELEASE_BASENAME }}/bin
+
+          echo "channel: ${{ github.ref_name }}" > ${{ env.RELEASE_BASENAME }}/version.yml
+          echo "commit: $(git rev-parse HEAD)" >> ${{ env.RELEASE_BASENAME }}/version.yml
+          echo "target: ${{ env.TARGET }}" >> ${{ env.RELEASE_BASENAME }}/version.yml
+
+          echo "Building project with cargo..."
+          cargo build --release || { echo "Cargo build failed!"; exit 1; }
+
+          BINARY_PATH="target/release/agave-install-init.exe"
+          if [ ! -f "$BINARY_PATH" ]; then
+            echo "Build artifact $BINARY_PATH is missing! Exiting."
+            exit 1
+          fi
+
+          echo "Copying binary to release directory..."
+          cp "$BINARY_PATH" ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.TARGET }}.exe
+
+          echo "Creating tarball..."
+          tar -cjf ${{ env.TARBALL_BASENAME }}-${{ env.TARGET }}.tar.bz2 ${{ env.RELEASE_BASENAME }}
+
+      # Save Build State
+      - name: Save Build State
+        run: echo "Build completed successfully!" > build-success.txt
+      - uses: actions/upload-artifact@v3
+        with:
+          name: build-success-windows
+          path: build-success.txt
+
+      # Fetch Latest Release
+      - name: Fetch Latest Release
+        id: get_latest_release
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/releases/latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verify Files Before Upload
+      - name: Verify Files
+        shell: bash
+        run: |
+          if [ ! -f "solana-release-x86_64-pc-windows-msvc.tar.bz2" ]; then
+            echo "Tarball missing!"
+            exit 1
+          fi
+          echo "Tarball found:"
+          ls -lh solana-release-x86_64-pc-windows-msvc.tar.bz2
+
+
+      # Upload Build Artifacts
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-artifacts
+          path: |
+            ${{ env.TARBALL_BASENAME }}-${{ env.TARGET }}.tar.bz2
+            ${{ env.RELEASE_BASENAME }}/version.yml
+            ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.TARGET }}.exe
+
+      # Upload Release Tarball
+      - name: Upload Release Tarball
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ env.TARBALL_BASENAME }}-${{ env.TARGET }}.tar.bz2
+          asset_name: ${{ env.TARBALL_BASENAME }}-${{ env.TARGET }}.tar.bz2
+          asset_content_type: application/x-bzip2
+
+      - name: Upload Binary File
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.TARGET }}.exe
+          asset_name: agave-install-init-${{ env.target }}
+          asset_content_type: application/octet-stream
+
+      # Rename Version YAML to Match Tarball
+      - name: Rename Version YAML
+        run: |
+          VERSION_YML_PATH="${{ env.RELEASE_BASENAME }}/version.yml"
+          RENAMED_YML="${{ env.TARBALL_BASENAME }}-${{ env.target }}.yml"
+
+          if [ -f "$VERSION_YML_PATH" ]; then
+            echo "Renaming $VERSION_YML_PATH to $RENAMED_YML..."
+            cp "$VERSION_YML_PATH" "$RENAMED_YML"
+          else
+            echo "Error: version.yml does not exist!"
+            exit 1
+          fi
+          echo "Renamed version.yml: $RENAMED_YML"
+
+      # Upload Renamed Version YAML
+      - name: Upload Version YAML
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ env.TARBALL_BASENAME }}-${{ env.target }}.yml
+          asset_name: ${{ env.TARBALL_BASENAME }}-${{ env.target }}.yml
+          asset_content_type: text/yaml
