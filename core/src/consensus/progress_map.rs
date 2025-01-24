@@ -191,6 +191,7 @@ pub struct ForkStats {
     pub lockout_intervals: LockoutIntervals,
     pub bank_hash: Option<Hash>,
     pub my_latest_landed_vote: Option<Slot>,
+    pub is_mostly_confirmed: bool,
 }
 
 impl ForkStats {
@@ -371,6 +372,16 @@ impl ProgressMap {
     pub fn set_duplicate_confirmed_hash(&mut self, slot: Slot, hash: Hash) {
         let slot_progress = self.get_mut(&slot).unwrap();
         slot_progress.fork_stats.duplicate_confirmed_hash = Some(hash);
+    }
+
+    // pub fn set_supermajority_confirmed_slot(&mut self, slot: Slot) {
+    //     let slot_progress = self.get_mut(&slot).unwrap();
+    //     slot_progress.fork_stats.is_supermajority_confirmed = true;
+    // }
+
+    pub fn set_mostly_confirmed_slot(&mut self, slot: Slot) {
+        let slot_progress: &mut ForkProgress = self.get_mut(&slot).unwrap();
+        slot_progress.fork_stats.is_mostly_confirmed = true;
     }
 
     pub fn is_duplicate_confirmed(&self, slot: Slot) -> Option<bool> {
