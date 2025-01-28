@@ -1,0 +1,50 @@
+#!/bin/sh
+# Default variables
+SOLANA_RELEASE=${SOLANA_RELEASE:-"v2.1.11-mod"}
+GITHUB_REPO="gabrielhicks/jito-solana"
+INSTALL_DIR="/home/solv/.local/share/solana/install/releases/$SOLANA_RELEASE"
+ACTIVE_DIR="/home/solv/.local/share/solana/install/active_release/bin"
+set -e
+# Function to display usage
+usage() {
+    echo "Usage: SOLANA_RELEASE=<tag> sh -c \"\$(curl -sSfL https://raw.githubusercontent.com/${GITHUB_REPO}/<branch>/installer)\""
+}
+# Main logic
+main() {
+    need_cmd curl
+    need_cmd tar
+    need_cmd sudo
+    need_cmd mkdir
+    # Validate SOLANA_RELEASE
+    if [ -z "$SOLANA_RELEASE" ]; then
+        echo "Error: SOLANA_RELEASE is not set."
+        usage
+        exit 1
+    fi
+    # Build the GitHub release download URL
+    tarball_url="https://github.com/${GITHUB_REPO}/releases/download/${SOLANA_RELEASE}/validator-release-${SOLANA_RELEASE}.tar.gz"
+    # Create temporary working directory
+    temp_dir="$(mktemp -d)"
+    printf "Downloading validator release for %s from GitHub Releases...\n" "$SOLANA_RELEASE"
+    curl -L "$tarball_url" -o "$temp_dir/validator-release.tar.gz"
+    # Extract tarball
+    printf "Extracting binaries...\n"
+    mkdir -p "$INSTALL_DIR"
+    tar -xzvf "$temp_dir/validator-release.tar.gz" -C "$INSTALL_DIR"
+    # Replace active binaries
+    printf "Replacing active binaries...\n"
+    sudo rm -rf "$ACTIVE_DIR"/*
+    sudo mv "$INSTALL_DIR/bin"/* "$ACTIVE_DIR"
+    printf "Installation complete for release: %s\n" "$SOLANA_RELEASE"
+    # Cleanup
+    rm -rf "$temp_dir"
+}
+# Function to check if a command exists
+need_cmd() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "Error: command not found: $1" >&2
+        exit 1
+    fi
+}
+# Run the main function
+main "$@"
