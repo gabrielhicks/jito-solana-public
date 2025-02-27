@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
@@ -73,7 +73,7 @@ jobs:
       # Cache Cargo dependencies
       - name: Cache Cargo Dependencies
         if: inputs.skip_cache == 'false'
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo
@@ -93,7 +93,7 @@ jobs:
       # Restore state
       - name: Check Build State
         id: check_state
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build-success-linux
         continue-on-error: true
@@ -133,7 +133,7 @@ jobs:
 
       - name: Save Build State
         run: echo "Build completed successfully!" > build-success.txt
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-success-linux
           path: build-success.txt
@@ -153,7 +153,7 @@ jobs:
 
       # Upload artifacts
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifacts-linux
           path: |
@@ -163,7 +163,7 @@ jobs:
 
       # Upload SBF SDK Artifact
       - name: Upload SBF SDK Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: sbf-sdk-linux
           path: ${{ env.RELEASE_BASENAME }}/sdk/sbf-sdk.tar.bz2

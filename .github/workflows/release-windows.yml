@@ -18,7 +18,7 @@ jobs:
     steps:
       # Checkout Code
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
@@ -26,7 +26,7 @@ jobs:
 
       # Cache Cargo Dependencies
       - name: Cache Cargo Dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo
@@ -37,7 +37,7 @@ jobs:
 
       # Cache Chocolatey Packages
       - name: Cache Chocolatey Dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: C:\ProgramData\chocolatey\lib
           key: choco-${{ runner.os }}-${{ hashFiles('.github/workflows/build-windows.yml') }}
@@ -58,7 +58,7 @@ jobs:
       # Check Build State
       - name: Check Build State
         id: check_state
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build-success-windows
         continue-on-error: true
@@ -119,7 +119,7 @@ jobs:
       # Save Build State
       - name: Save Build State
         run: echo "Build completed successfully!" > build-success.txt
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-success-windows
           path: build-success.txt
@@ -147,7 +147,7 @@ jobs:
 
       # Upload Build Artifacts
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
           path: |

@@ -17,7 +17,7 @@ jobs:
     steps:
       # Checkout Code
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
@@ -25,7 +25,7 @@ jobs:
       # Cache System Dependencies
       - name: Cache Homebrew Dependencies
         id: cache-homebrew
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /usr/local/Homebrew
           key: homebrew-${{ runner.os }}-${{ hashFiles('.github/workflows/build-mac.yml') }}
@@ -46,7 +46,7 @@ jobs:
 
       # Cache Cargo Dependencies
       - name: Cache Cargo Dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo
@@ -76,7 +76,7 @@ jobs:
       # Check Build State
       - name: Check Build State
         id: check_state
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: build-success-mac
         continue-on-error: true
@@ -115,7 +115,7 @@ jobs:
       # Save Build State
       - name: Save Build State
         run: echo "Build completed successfully!" > build-success.txt
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-success-mac
           path: build-success.txt
@@ -143,7 +143,7 @@ jobs:
 
       # Upload Artifacts
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifacts-mac
           path: |
