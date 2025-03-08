@@ -1,0 +1,242 @@
+name: Build and Publish Linux Artifacts
+
+on:
+  release:
+    types: [published] 
+  workflow_dispatch:    
+    inputs:
+      release_id:
+        description: "ID of the release to re-run workflow for"
+        required: true
+      skip_tarball:
+        description: "Skip uploading the tarball"
+        required: false
+        default: "false"
+      skip_binary:
+        description: "Skip uploading the binary"
+        required: false
+        default: "false"
+      skip_sbf_sdk:
+        description: "Skip uploading the SBF SDK"
+        required: false
+        default: "false"
+      skip_cache:
+        description: "Skip the cache"
+        required: false
+        default: "false"
+        
+jobs:
+  build-linux:
+    runs-on: ubuntu-20.04
+
+    env:
+      RELEASE_BASENAME: solana-release
+      TARBALL_BASENAME: solana-release
+      SOLANA_DOWNLOAD_ROOT: https://github.com/gabrielhicks/jito-solana/releases/download
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      # Fetch Upload URL for workflow_dispatch
+      - name: Fetch Upload URL
+        if: github.event_name == 'workflow_dispatch'
+        id: get_upload_url
+        run: |
+          RELEASE_ID=${{ inputs.release_id }}
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Error: 'release_id' input is required for workflow_dispatch."
+            exit 1
+          fi
+
+          echo "Fetching upload URL for release ID: $RELEASE_ID..."
+          API_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID")
+
+          echo "API Response: $API_RESPONSE"
+
+          UPLOAD_URL=$(echo "$API_RESPONSE" | jq -r '.upload_url')
+
+          if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "null" ]; then
+            echo "Error: Failed to fetch upload URL. Full API response:"
+            echo "$API_RESPONSE"
+            exit 1
+          fi
+
+          echo "Successfully fetched upload URL: $UPLOAD_URL"
+          echo "UPLOAD_URL=$UPLOAD_URL" >> $GITHUB_ENV
+
+
+      # Cache Cargo dependencies
+      - name: Cache Cargo Dependencies
+        if: inputs.skip_cache == 'false'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: cargo-${{ runner.os }}-$(lsb_release -rs)-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-$(lsb_release -rs)-
+
+      # Cache system dependencies
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang \
+            cmake make libprotobuf-dev protobuf-compiler
+
+      # Restore state
+      - name: Check Build State
+        id: check_state
+        uses: actions/download-artifact@v4
+        with:
+          name: build-success-linux
+        continue-on-error: true
+
+      - name: Skip Build If Successful
+        if: steps.check_state.outcome == 'success'
+        run: |
+          echo "Build already completed. Skipping..."
+          exit 0
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Build Project
+        run: |
+          mkdir -p ${{ env.RELEASE_BASENAME }}
+          echo "channel: ${{ github.ref_name }}" > ${{ env.RELEASE_BASENAME }}/version.yml
+          echo "commit: $(git rev-parse HEAD)" >> ${{ env.RELEASE_BASENAME }}/version.yml
+          echo "target: x86_64-unknown-linux-gnu" >> ${{ env.RELEASE_BASENAME }}/version.yml
+
+          echo "Building project with cargo..."
+          cargo build --release
+
+          BINARY_PATH="target/release/agave-install-init"
+          if [ ! -f "$BINARY_PATH" ]; then
+            echo "Build artifact $BINARY_PATH is missing!"
+            exit 1
+          fi
+
+          mkdir -p ${{ env.RELEASE_BASENAME }}/bin
+          cp "$BINARY_PATH" ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-x86_64-unknown-linux-gnu
+          tar -cvf ${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.tar ${{ env.RELEASE_BASENAME }}
+          bzip2 ${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.tar
+
+      - name: Save Build State
+        run: echo "Build completed successfully!" > build-success.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-success-linux
+          path: build-success.txt
+
+      - name: Package SBF SDK
+        run: |
+          echo "Packaging SBF SDK..."
+          mkdir -p ${{ env.RELEASE_BASENAME }}/sdk
+          tar -cvjf ${{ env.RELEASE_BASENAME }}/sdk/sbf-sdk.tar.bz2 -C sdk sbf
+
+          # Verify the SBF SDK tarball exists
+          if [ ! -f "${{ env.RELEASE_BASENAME }}/sdk/sbf-sdk.tar.bz2" ]; then
+            echo "SBF SDK tarball is missing!"
+            exit 1
+          fi
+          echo "SBF SDK tarball created: ${{ env.RELEASE_BASENAME }}/sdk/sbf-sdk.tar.bz2"
+
+      # Upload artifacts
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-linux
+          path: |
+            ${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.tar.bz2
+            ${{ env.RELEASE_BASENAME }}/version.yml
+            ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-x86_64-unknown-linux-gnu
+
+      # Upload SBF SDK Artifact
+      - name: Upload SBF SDK Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbf-sdk-linux
+          path: ${{ env.RELEASE_BASENAME }}/sdk/sbf-sdk.tar.bz2
+
+      # Verify Tarball Before Upload
+      - name: Verify Release Tarball
+        run: |
+          TARBALL="${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.tar.bz2"
+          if [ ! -f "$TARBALL" ]; then
+            echo "Tarball $TARBALL does not exist!"
+            exit 1
+          fi
+          echo "Tarball exists: $TARBALL"
+
+      # Upload Release Tarball
+      - name: Upload Release Tarball
+        if: inputs.skip_tarball == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url || env.UPLOAD_URL }}
+          asset_path: ${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.tar.bz2
+          asset_name: ${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.tar.bz2
+          asset_content_type: application/x-bzip2
+
+      # Upload Binary File
+      - name: Upload Binary File
+        if: inputs.skip_binary == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url || env.UPLOAD_URL }}
+          asset_path: ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-x86_64-unknown-linux-gnu
+          asset_name: agave-install-init-x86_64-unknown-linux-gnu
+          asset_content_type: application/octet-stream
+
+      # Upload SBF SDK Tarball
+      - name: Upload SBF SDK Tarball
+        if: inputs.skip_sbf_sdk == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url || env.UPLOAD_URL }}
+          asset_path: ${{ env.RELEASE_BASENAME }}/sdk/sbf-sdk.tar.bz2
+          asset_name: sbf-sdk.tar.bz2
+          asset_content_type: application/x-bzip2
+
+      # Rename Version YAML to Match Tarball
+      - name: Rename Version YAML
+        run: |
+          VERSION_YML_PATH="${{ env.RELEASE_BASENAME }}/version.yml"
+          RENAMED_YML="${{ env.TARBALL_BASENAME }}-x86_64-unknown-linux-gnu.yml"
+
+          if [ -f "$VERSION_YML_PATH" ]; then
+            echo "Renaming $VERSION_YML_PATH to $RENAMED_YML..."
+            cp "$VERSION_YML_PATH" "$RENAMED_YML"
+          else
+            echo "Error: version.yml does not exist!"
+            exit 1
+          fi
+          echo "Renamed version.yml: $RENAMED_YML"
+
+      # Upload Renamed Version YAML
+      - name: Upload Version YAML
+        if: inputs.skip_sbf_sdk == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url || env.UPLOAD_URL }}
+          asset_path: solana-release-x86_64-unknown-linux-gnu.yml
+          asset_name: solana-release-x86_64-unknown-linux-gnu.yml
+          asset_content_type: text/yaml
