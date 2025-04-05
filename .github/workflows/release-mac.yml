@@ -1,0 +1,208 @@
+name: Build and Publish Mac Artifacts
+
+on:
+  release:
+    types: [published] 
+  workflow_dispatch:    
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    env:
+      RELEASE_BASENAME: solana-release
+      TARBALL_BASENAME: solana-release
+      SOLANA_DOWNLOAD_ROOT: https://github.com/gabrielhicks/jito-solana/releases/download
+
+    steps:
+      # Checkout Code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      # Cache System Dependencies
+      - name: Cache Homebrew Dependencies
+        id: cache-homebrew
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/Homebrew
+          key: homebrew-${{ runner.os }}-${{ hashFiles('.github/workflows/build-mac.yml') }}
+
+      # Install System Dependencies
+      - name: Install System Dependencies
+        if: steps.cache-homebrew.outputs.cache-hit != 'true'
+        run: |
+          brew update
+          brew install openssl pkg-config zlib llvm cmake make protobuf jq
+          # Verify required tools
+          for tool in cargo tar bzip2 jq; do
+            if ! command -v $tool >/dev/null; then
+              echo "$tool is missing! Exiting."
+              exit 1
+            fi
+          done
+
+      # Cache Cargo Dependencies
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      # Setup Rust
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Verify Rust Installation
+        run: |
+          rustc --version || { echo "Rust is not installed!"; exit 1; }
+          cargo --version || { echo "Cargo is not installed!"; exit 1; }
+
+      # Determine Build Target
+      - name: Determine Build Target
+        run: |
+          echo "target=arm64-apple-darwin" >> $GITHUB_ENV
+          echo "Build target: ${{ env.target }}"
+
+      # Check Build State
+      - name: Check Build State
+        id: check_state
+        uses: actions/download-artifact@v4
+        with:
+          name: build-success-mac
+        continue-on-error: true
+
+      - name: Skip Build If Successful
+        if: steps.check_state.outcome == 'success'
+        run: |
+          echo "Build already completed successfully. Skipping..."
+          exit 0
+
+      # Build Project
+      - name: Build Project
+        run: |
+          mkdir -p ${{ env.RELEASE_BASENAME }}
+          echo "channel: ${{ github.ref_name }}" > ${{ env.RELEASE_BASENAME }}/version.yml
+          echo "commit: $(git rev-parse HEAD)" >> ${{ env.RELEASE_BASENAME }}/version.yml
+          echo "target: ${{ env.target }}" >> ${{ env.RELEASE_BASENAME }}/version.yml
+
+          echo "Building project with cargo..."
+          cargo build --release || { echo "Cargo build failed!"; exit 1; }
+
+          BINARY_PATH="target/release/agave-install-init"
+          if [ ! -f "$BINARY_PATH" ]; then
+            echo "Build artifact $BINARY_PATH is missing!"
+            exit 1
+          fi
+
+          echo "Copying binary to release directory..."
+          mkdir -p ${{ env.RELEASE_BASENAME }}/bin
+          cp "$BINARY_PATH" ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.target }}
+
+          echo "Creating tarball..."
+          tar -cvf ${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar ${{ env.RELEASE_BASENAME }}
+          bzip2 ${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar
+
+      # Save Build State
+      - name: Save Build State
+        run: echo "Build completed successfully!" > build-success.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-success-mac
+          path: build-success.txt
+
+      # Fetch Latest Release
+      - name: Fetch Latest Release
+        id: get_latest_release
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verify Files Before Upload
+      - name: Verify Files Before Upload
+        run: |
+          for file in ${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar.bz2 \
+                      ${{ env.RELEASE_BASENAME }}/version.yml \
+                      ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.target }}; do
+            if [ ! -f "$file" ]; then
+              echo "File $file is missing!"
+              exit 1
+            fi
+          done
+
+      # Upload Artifacts
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-mac
+          path: |
+            ${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar.bz2
+            ${{ env.RELEASE_BASENAME }}/version.yml
+            ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.target }}
+
+      # Verify Tarball Before Upload
+      - name: Verify Tarball Before Upload
+        shell: bash
+        run: |
+          TARBALL="${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar.bz2"
+          echo "Verifying file: $TARBALL"
+          ls -lh "$TARBALL" || { echo "Tarball $TARBALL does not exist!"; exit 1; }
+          echo "Tarball exists and ready for upload."
+
+      # Upload Release Tarball
+      - name: Upload Release Tarball
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar.bz2
+          asset_name: ${{ env.TARBALL_BASENAME }}-${{ env.target }}.tar.bz2
+          asset_content_type: application/x-bzip2
+
+      - name: Upload Binary File
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ env.RELEASE_BASENAME }}/bin/agave-install-init-${{ env.target }}
+          asset_name: agave-install-init-${{ env.target }}
+          asset_content_type: application/octet-stream
+
+      # Rename Version YAML to Match Tarball
+      - name: Rename Version YAML
+        run: |
+          VERSION_YML_PATH="${{ env.RELEASE_BASENAME }}/version.yml"
+          RENAMED_YML="${{ env.TARBALL_BASENAME }}-${{ env.target }}.yml"
+
+          if [ -f "$VERSION_YML_PATH" ]; then
+            echo "Renaming $VERSION_YML_PATH to $RENAMED_YML..."
+            cp "$VERSION_YML_PATH" "$RENAMED_YML"
+          else
+            echo "Error: version.yml does not exist!"
+            exit 1
+          fi
+          echo "Renamed version.yml: $RENAMED_YML"
+
+      # Upload Renamed Version YAML
+      - name: Upload Version YAML
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ env.TARBALL_BASENAME }}-${{ env.target }}.yml
+          asset_name: ${{ env.TARBALL_BASENAME }}-${{ env.target }}.yml
+          asset_content_type: text/yaml
