@@ -32,7 +32,7 @@ jobs:
     env:
       RELEASE_BASENAME: solana-release
       TARBALL_BASENAME: solana-release
-      SOLANA_DOWNLOAD_ROOT: https://github.com/gabrielhicks/jito-solana/releases/download
+      SOLANA_DOWNLOAD_ROOT: https://github.com/gabrielhicks/jito-solana-public/releases/download
 
     steps:
       - name: Checkout Repository
