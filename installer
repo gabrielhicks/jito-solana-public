@@ -1,6 +1,6 @@
 #!/bin/sh
 # Default variables
-SOLANA_RELEASE=${SOLANA_RELEASE:-"v2.1.18-mod"}
+SOLANA_RELEASE=${SOLANA_RELEASE:-"v2.1.21-mod"}
 GITHUB_REPO="gabrielhicks/jito-solana-public"
 INSTALL_DIR="/home/solv/.local/share/solana/install/releases/$SOLANA_RELEASE"
 ACTIVE_DIR="/home/solv/.local/share/solana/install/active_release/bin"
